@@ -99,6 +99,5 @@ for diff in ${diffs[@]}; do
 </types>" >> $tmp_path/$file
     fi
 done
-
-    echo "$package_xml_ending" >> "$tmp_path/$file"
-    echo "done"
+echo "$package_xml_ending" >> "$tmp_path/$file"
+echo "done"
