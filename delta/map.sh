@@ -16,7 +16,6 @@ package_xml_begining='<?xml version="1.0" encoding="UTF-8"?>
 package_xml_ending="    <version>54.0</version>
 </Package>"
 
-echo "$package_xml_begining" > "$tmp_path/$file"
 
 
 
@@ -30,25 +29,26 @@ else
     mkdir $tmp_path
 fi
 
-mapfile -t diffs < <(git diff --name-only --diff-filter="$flags" release_90 full_90_delta_validation_specified_tests)
+mapfile -t diffs < <(git diff --name-only --diff-filter="$flags" development full_94 )
 
 function move_files_to_tmp() {
     if [[ "$file_name" == ".gitignore" ]] || [[ "$file_name" == "diff.sh" ]] || [[ "$file_name" == "destructiveChanges.xml" ]]; then
         :
     fi
-    # This condition has to be here in case that aura and lwc dont cant be deplyed when files separated
+    # This condition has to be here in case that aura and lwc cant be deplyed when files separated
     if [[ "$direc" == "aura" ]] || [[ "$direc" == "lwc" ]]; then
-        file_name=$(echo $file_name | grep -o '[a-zA-Z]*\/[a-zA-Z]*\/[A-Za-z]*.*\/')
-        echo "Moving $file_name into $tmp_path/$direc"
-        mv $file_name $tmp_path/$direc
+        if [ -e $file_name ]; then
+            file_name=$(echo $file_name | grep -o '[a-zA-Z]*\/[a-zA-Z]*\/[A-Za-z]*.*\/')
+            mv $file_name $tmp_path/$direc
+        else
+            :
+        fi
     # emails have subdirs
     elif [[ "$direc" == "email" ]]; then
-        echo "Moving email $file_name to $tmp_path/$direc/$subdir"
         mv $file_name $tmp_path/$direc/$subdir
     fi
     # checking if file exists and if yes move it
     if [[ -f "$file_name" ]]; then
-        echo "Moving $file_name into $tmp_path/$direc"
         mv $file_name $tmp_path/$direc
     else
         :
@@ -59,14 +59,12 @@ function move_files_to_tmp() {
 function moving_meta_file_to_tmp() {
     meta_file="$file_name-meta.xml"
     if [[ "$direc" == "email" ]]; then
-        echo "Moving Email Meta to $tmp_path/$direc/$subdir"
         mv $meta_file $tmp_path/$direc/$subdir
     fi
     if [[ "$direc" == "aura" ]] || [[ "$direc" == "lwc" ]]; then
         :
     fi
     if [[ -f "$meta_file" ]]; then
-        echo "Moving $meta_file to $tmp_path/$direc"
         mv $meta_file $tmp_path/$direc
     else
         :
@@ -133,15 +131,19 @@ function SOQL_get_tests {
 
 function create_packagexml(){
     IFS=$'\n'
+    echo "Creating package.xml"
+    echo "$package_xml_begining" > "$tmp_path/$file"
     for diff in ${diffs[@]}; do
         case $diff in
             *.app) NAME="CustomApplication";;
-            *.assigentRules) NAME="AssignmentRules";;
+            *.assignmentRules) NAME="AssignmentRules";;
             */aura/*) NAME="AuraDefinitionBundle";;
             *.cls) NAME="ApexClass";;
+            *.cls-meta.xml) continue;;
             *.component) NAME="ApexComponent";;
             *.md*) NAME="CustomMetadata";;
             *.customPermission) NAME="CustomPermission";;
+            *.customPermission-meta.xml) NAME="CustomPermission";;
             */documents/*) NAME="Document";;
             *.duplicateRule) NAME="DuplicateRule";;
             */email/*) NAME="EmailTemplate";;
@@ -152,6 +154,7 @@ function create_packagexml(){
             *.group) NAME="Group";;
             *.labels) NAME="CustomLabels";;
             *.layout) NAME="Layout";;
+            *.layout-meta.xml) NAME="Layout";;
             *.LeadConvertSetting) NAME="LeadConvertSetting";;
             */lwc/*) NAME="LightningComponentBundle";;
             *.matchingRule) NAME="MatchingRule";;
@@ -159,6 +162,7 @@ function create_packagexml(){
             *.objectTranslation) NAME="CustomObjectTranslation";;
             *.page) NAME="ApexPage";;
             *.permissionset) NAME="PermissionSet";;
+            *.permissionset-meta.xml) NAME="PermissionSet";;
             *.profile) NAME="Profile";;
             *.queueRoutingConfig) NAME="QueueRoutingConfig";;
             *.queue) NAME="Queue";;
@@ -169,12 +173,13 @@ function create_packagexml(){
             *.site) NAME="CustomSite";;
             *.standardValueSet) NAME="StandardValueSet";;
             *.resource) NAME="StaticResource";;
+            *.resource-meta.xml) continue;;
             *.tab) NAME="CustomTab";;
             *.translation) NAME="Translations";;
             *.trigger) NAME="ApexTrigger";;
             *.workflow) NAME="Workflow";;
+            *) NAME="UNKNOWN"
         esac
-        echo "$NAME"
         # if [[ "$NAME" != "UNKNOWN TYPE" ]];then
         #     case $diff in
         #         src/email/*)
@@ -200,20 +205,22 @@ function create_packagexml(){
         #     fi
         #     echo $MEMBER
         # fi
-        if grep -q $NAME "$tmp_path/$file";then
+        if grep -qw $NAME "$tmp_path/$file";then
             continue
         else
             echo "    <types>
-            <members>*</members>
-            <name>"$NAME"</name>
-        </types>" >> "$tmp_path/$file"
+        <members>*</members>
+        <name>$NAME</name>
+    </types>" >> $tmp_path/$file
         fi
     done
 
     echo "$package_xml_ending" >> "$tmp_path/$file"
+    echo "done"
 }
 
 function generate_delta(){
+    echo "Generating Delta"
     IFS=$'\n'
     for file_name in "${diffs[@]}"; do
         # creating dirs for each of component
@@ -246,30 +253,27 @@ function generate_delta(){
             moving_meta_file_to_tmp
             TestsForSTR
         done
-    done    
+    done
+    echo "done"
 }
 
 
 generate_delta
 create_packagexml
+echo "PACKAGE XML GENERATED"
 # adding <'> symbol to bigining and end of each of class. Need for tests query
 aClasses=$(echo "$aClasses" | sed -e "s/\b/'/g")
-echo "For This classes tests will be found"
-echo "$aClasses"
+# echo "For This classes tests will be found"
+# echo "$aClasses"
+
+echo "$aquery IN($aClasses)" > queryfile.txt
 
 SOQL_get_tests
-echo "This classes will be executed"
-echo "$specifiedTests"
-# Retiving file just to generate package xml of our delta
-set +x
-sfdx force:mdapi:retrieve -r mypkg/ -u a10 -d $tmp_path
-set -x
-unzip -q mypkg/unpackaged.zip
-echo "Moving package.xml to tmp folder"
-cp unpackaged/package.xml $tmp_path
+# echo "This classes will be executed"
+# echo "$specifiedTests"
 
 if [[ "$specifiedTests" == "" ]]; then
-    sfdx force:mdapi:legacy:deploy --checkonly -u a10 -d $tmp_path -w -1
+    sfdx force:mdapi:deploy --checkonly -u a10 -d $tmp_path -w -1
 else
-    sfdx force:mdapi:legacy:deploy --checkonly -u a10 -d $tmp_path -w -1 -l RunSpecifiedTests -r "$specifiedTests"
+    sfdx force:mdapi:deploy --checkonly -u a10 -d $tmp_path -w -1 -l RunSpecifiedTests -r "$specifiedTests"
 fi
