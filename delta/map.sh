@@ -29,47 +29,59 @@ else
     mkdir $tmp_path
 fi
 
-mapfile -t diffs < <(git diff --name-only --diff-filter="$flags" development full_94 )
+mapfile -t diffs < <(git diff --name-only --diff-filter="$flags" target_branch source_branch )
 
 function move_files_to_tmp() {
-    if [[ "$file_name" == ".gitignore" ]] || [[ "$file_name" == "diff.sh" ]] || [[ "$file_name" == "destructiveChanges.xml" ]]; then
-        :
-    fi
+    if [[ "$file_name" == ".gitignore" ]] || [[ "$file_name" == "diff.sh" ]]; then
+        return
+    fi  
     # This condition has to be here in case that aura and lwc cant be deplyed when files separated
     if [[ "$direc" == "aura" ]] || [[ "$direc" == "lwc" ]]; then
-        if [ -e $file_name ]; then
-            file_name=$(echo $file_name | grep -o '[a-zA-Z]*\/[a-zA-Z]*\/[A-Za-z]*.*\/')
-            mv $file_name $tmp_path/$direc
-        else
-            :
+        if [ ! -e $file_name ]; then    
+            return
         fi
+        file_name=$(echo $file_name | grep -o '[a-zA-Z]*\/[a-zA-Z]*\/[A-Za-z]*.*\/')
+        mv $file_name $tmp_path/$direc
+    fi
     # emails have subdirs
-    elif [[ "$direc" == "email" ]]; then
+    if [[ "$direc" == "email" ]]; then
+        if [ ! -e "$file_name" ];then
+            return
+        fi
         mv $file_name $tmp_path/$direc/$subdir
     fi
     # checking if file exists and if yes move it
-    if [[ -f "$file_name" ]]; then
-        mv $file_name $tmp_path/$direc
-    else
-        :
-        # echo "$file_name already moved or doesn't exist"
-    fi 
+    if [[ ! -e "$file_name" ]]; then
+        return
+    # echo "$file_name already moved or doesn't exist"
+    fi
+    mv $file_name $tmp_path/$direc
 }
 
 function moving_meta_file_to_tmp() {
-    meta_file="$file_name-meta.xml"
+    if [[ "$file_name" == *"-meta.xml"* ]];then
+        meta_file="$file_name"
+    else
+        meta_file="$file_name-meta.xml"
+    fi
+    
     if [[ "$direc" == "email" ]]; then
+        if [ ! -e "$meta_file" ];then
+            return
+        fi
         mv $meta_file $tmp_path/$direc/$subdir
     fi
+
     if [[ "$direc" == "aura" ]] || [[ "$direc" == "lwc" ]]; then
-        :
+        return
     fi
-    if [[ -f "$meta_file" ]]; then
-        mv $meta_file $tmp_path/$direc
-    else
-        :
+    
+    if [[ ! -e "$meta_file" ]]; then
+        return
         # echo "$meta_file already moved or doesn't exist"
     fi
+    mv $meta_file $tmp_path/$direc
+
 }
 
 function TestsForSTR {
@@ -96,7 +108,7 @@ function TestsForSTR {
             fi
             # if list of classes contains current value - skip
             if [[ $aClasses == *"$apex_class"* ]]; then
-                :
+                return
             else
                 aClasses=$aClasses','$apex_class
             fi
@@ -175,10 +187,14 @@ function create_packagexml(){
             *.resource) NAME="StaticResource";;
             *.resource-meta.xml) continue;;
             *.tab) NAME="CustomTab";;
+            *.tab-meta.xml) NAME="CustomTab";;
             *.translation) NAME="Translations";;
             *.trigger) NAME="ApexTrigger";;
             *.workflow) NAME="Workflow";;
-            *) NAME="UNKNOWN"
+            */destructiveChanges.xml) continue;;
+            */destructiveChangesPre.xml) continue;;
+            */destructiveChangesPost.xml) continue;;
+            *) NAME="UNKNOWN";;
         esac
         # if [[ "$NAME" != "UNKNOWN TYPE" ]];then
         #     case $diff in
@@ -208,7 +224,7 @@ function create_packagexml(){
         if grep -qw $NAME "$tmp_path/$file";then
             continue
         else
-            echo "    <types>
+            echo     "<types>
         <members>*</members>
         <name>$NAME</name>
     </types>" >> $tmp_path/$file
@@ -224,28 +240,29 @@ function generate_delta(){
     IFS=$'\n'
     for file_name in "${diffs[@]}"; do
         # creating dirs for each of component
+        if [[ "$file_name" == *"destructiveChangesPost.xml"* ]] || [[ "$file_name" = *"destructiveChangesPre.xml"* ]] || [[ "$file_name" == *"destructiveChanges.xml"* ]];then
+            mv "$file_name" "$tmp_path/"
+        fi
+
         for direc in $file_name; do
             direc=$(echo "$direc" | sed -e 's/src\///')
             direc=$(echo "$direc" | sed -e 's/\/[A-Za-z].*//')
             # just validation to avoid unwanted dirrs. Add your condition if needed
-            if [[ "$direc" == ".gitignore" ]] || [[ "$direc" == "diff.sh" ]] || [[ "$direc" == "destructiveChangesPost.xml" ]]; then
-                :
+            if [[ "$direc" == ".gitignore" ]] || [[ "$direc" == "destructiveChangesPost.xml" ]] || [[ "$direc" = "destructiveChangesPre.xml" ]] || [[ "$direc" == "destructiveChanges.xml" ]]; then
+                continue
             fi
+            
             # vailadation of dirs existance
-            if [[ -d $tmp_path/$direc ]]; then
+            if [[ ! -d $tmp_path/$direc ]]; then
                 # echo "Dirrecotry $tmp_path/$direc exists"
-                :
-            else
-                mkdir $tmp_path/$direc
+                mkdir $tmp_path/$direc    
             fi
             # emails has subdirs which must be created
             if [[ "$direc" == "email" ]]; then
                 subdir=$file_name
                 # Grepping for example "All" subfolder
                 subdir=$(echo "$subdir" | grep -o '[^src\/email][a-zA-Z].*\/')
-                if [[ -d $tmp_path/$direc/$subdir ]]; then
-                    :
-                else
+                if [[ ! -d $tmp_path/$direc/$subdir ]]; then
                     mkdir $tmp_path/$direc/$subdir
                 fi
             fi
@@ -257,23 +274,25 @@ function generate_delta(){
     echo "done"
 }
 
+if [[ "${diffs[@]}"  == *"profiles"* ]];then
+    echo "Profiles changes detected. Starting Deploy of src folder"
+    sfdx force:mdapi:deploy --checkonly -u a10 -d src/ -w -1 -l RunLocalTests #${__alias} 
+else    
+    generate_delta
+    create_packagexml
+    echo "PACKAGE XML GENERATED"
+    # adding <'> symbol to bigining and end of each of class. Need for tests query
+    aClasses=$(echo "$aClasses" | sed -e "s/\b/'/g")
+    # echo "For This classes tests will be found"
+    # echo "$aClasses"
 
-generate_delta
-create_packagexml
-echo "PACKAGE XML GENERATED"
-# adding <'> symbol to bigining and end of each of class. Need for tests query
-aClasses=$(echo "$aClasses" | sed -e "s/\b/'/g")
-# echo "For This classes tests will be found"
-# echo "$aClasses"
+    SOQL_get_tests
+    # echo "This classes will be executed"
+    # echo "$specifiedTests"
 
-echo "$aquery IN($aClasses)" > queryfile.txt
-
-SOQL_get_tests
-# echo "This classes will be executed"
-# echo "$specifiedTests"
-
-if [[ "$specifiedTests" == "" ]]; then
-    sfdx force:mdapi:deploy --checkonly -u a10 -d $tmp_path -w -1
-else
-    sfdx force:mdapi:deploy --checkonly -u a10 -d $tmp_path -w -1 -l RunSpecifiedTests -r "$specifiedTests"
+    if [[ "$specifiedTests" == "" ]]; then
+        sfdx force:mdapi:deploy --checkonly -u tagetOrg -d $tmp_path -w -1
+    else
+        sfdx force:mdapi:deploy --checkonly -u targetOrg -d $tmp_path -w -1 -l RunSpecifiedTests -r "$specifiedTests"
+    fi
 fi
